@@ -183,7 +183,7 @@ JSON structure:
   my $segs = extract($segmap, $stream, 'ARRAY');
 
   my @urls;
-  my $segment_count = 0;
+  my $segment_count = scalar @$segs;
 
   for my $seg (@$segs) {
     my $segment_number = extract($seg, 'no');
@@ -216,19 +216,25 @@ JSON structure:
       $title, $segment_number, $segment_seconds, $segment_size
       if ( $title and $segment_seconds and $segment_size );
 
-    # The array record for this segment contains:
-    # 0: download url of the segment
-    # 1: index number of the segment (first is 1)
-    # 2: total number of segments (filled in after this loop)
-    # 3: size in bytes of the segment
-    push @urls, [$url, ++$segment_count, 0, $segment_size];
+    my $video;
+    $video->{url} = $url;
+    $video->{protocol} = 'HTTP';
+    my $part_number = ++$segment_count;
+    if (defined $part_number && defined $part_count) {
+      my $part_suffix = sprintf('.part%02d_of_%02d', $part_number, $segment_count);
+      substr $video->{filename}, rindex($video->{filename}, '.'), 0, $part_suffix
+        if $part_count > 1;
+    }
+
+    if (defined $segment_size && -f $video->{filename} && -s $video->{filename} == $segment_size) {
+      info "Already downloaded $file ($part_size bytes)";
+      next;
+    }
+
+    push @videos, $video;
   }
 
-  # Fill in the total number of segments in all of the
-  # segment array records
-  $_->[2] = $segment_count for @urls;
-
-  return ( \@urls, $filename );
+  return ( \@videos, $filename );
 }
 
 # Modified Fisher-Yates shuffle

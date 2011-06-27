@@ -11,11 +11,20 @@ use FlashVideo::Utils;
 use constant LATEST_RTMPDUMP => 2.2;
 
 sub download {
-  my ($self, $rtmp_data) = @_;
+  my ($self, $video) = @_;
 
-  $self->{printable_filename} = $rtmp_data->{flv};
+  $self->{printable_filename} = $video->{filename};
 
-  my $file = $rtmp_data->{flv} = $self->get_filename($rtmp_data->{flv});
+  my $file = $video->{filename} = $self->get_filename($video->{filename});
+
+  my $rtmp_data;
+  if($video->{rtmpdump_args}){
+    $rtmp_data = $video->{rtmpdump_args};
+  } else {
+    $rtmp_data = {};
+    $rtmp_data->{rtmp} = $video->{url};
+    $rtmp_data->{flv} = $video->{filename};
+  }
 
   if (-s $file && !$rtmp_data->{live}) {
     info "RTMP output filename '$self->{printable_filename}' already " .

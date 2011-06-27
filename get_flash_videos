@@ -304,15 +304,14 @@ sub download {
     error "Couldn't download '$url': " . $browser->response->status_line;
   }
 
-  # Figure out what package we need to use to get either the HTTP URL or
-  # rtmpdump data for the video.
+  # Figure out what package we need to use to get data for the vieo
   my($package, $possible_url) = FlashVideo::URLFinder->find_package($url, $browser);
 
-  my($actual_url, @suggested_fnames) = eval {
+  my(@catch_all) = eval {
     $package->find_video($browser, $possible_url, $prefs);
   };
 
-  if(!$actual_url) {
+  if(!@catch_all) {
     if($@ =~ /^Must have | requires /) {
       my $error = "$@";
       $error =~ s/at $0.*//;
@@ -324,59 +323,83 @@ sub download {
     }
   }
 
-  my $suggested_filename = $suggested_fnames[-1];
+  use Data::Dumper;
+  debug Dumper(@catch_all);
 
-  if (!$opt{play}) {
-    if (!$opt{yes} && @suggested_fnames > 1) {
-      print "There are different suggested filenames, please choose:\n";
-      my $count;
-      foreach my $filename (@suggested_fnames) {
-        $count++;
-        print "$count - $filename\n";
-      }
-
-      print "\nWhich filename would you like to use?: ";
-      chomp(my $chosen_fname = <STDIN>);
-
-      $suggested_filename = $suggested_fnames[$chosen_fname - 1] ||
-        $suggested_fnames[-1];
-    }
+  # compatability
+  my @suggested_fnames = 0;
+  my $datas;
+  if(ref @catch_all eq 'ARRAY' and ref $catch_all[0] ne 'HASH'){
+    @suggested_fnames = $catch_all[1];
+    $datas = $catch_all[0];
+  } else {
+    $datas = $catch_all[0];
   }
-
-  my $save_as = $opt{filename} || $suggested_filename;
 
   my $action = $opt{play} ? "play" : "download";
 
-  for my $data((ref($actual_url) eq 'ARRAY' ? @$actual_url : $actual_url)) {
+  for my $data((ref($datas) eq 'ARRAY' ? @$datas : $datas)) {
     my $downloader;
-    my $file = $save_as;
+
+    my $video = {};
+
+    # this is a little ugly, but hopefully we can eventually
+    # update all the plugins to this nice hash:
+    # $video = {
+    #   protocol => '', HTTP or RTMP
+    #   url => '',
+    #   filename => ''
+    # }
+
+    debug Dumper($data);
 
     if(ref $data eq 'HASH') {
-      # RTMP data
-      $downloader = FlashVideo::RTMPDownloader->new;
-      $file ||= $data->{flv};
+      if($video->{protocol}) { # we know for sure this is using the new way
+        $video = $data;
+        $video->{filename} = $opt{filename} || $video->{filename};
+      } else { # compatability
+        # old RTMP way
+        $video->{protocol} ||= 'RTMP'; # just in case this RTMP plugin didn't already set the type
+        $video->{filename} = $opt{filename} || $data->{flv};
+        $video->{url} = $data->{rtmp};
+        $video->{rtmpdump_args} = $data;
+      }
+    } elsif(ref $data eq 'ARRAY') { # compatability
+      # old HTTP way
+      $video->{protocol} = 'HTTP';
+      $video->{url} = @$data[0];
+      $video->{filename} = $opt{filename} || @$data[1];
     } else {
-      # HTTP
+      next;
+    }
+
+    debug Dumper($video);
+
+    if($video->{protocol} eq 'HTTP') {
       $downloader = FlashVideo::Downloader->new;
+    } elsif($video->{protocol} eq 'RTMP'){
+      $downloader = FlashVideo::RTMPDownloader->new;
+    } # maybe some other protocols later...
+
+    if (!$opt{play} && !$opt{filename} && @suggested_fnames != 0) {
+      $video->{filename} = $suggested_fnames[-1];
+      if(!$opt{yes} && @suggested_fnames > 1) {
+        print "There are different suggested filenames, please choose:\n";
+        my $count;
+        foreach my $filename (@suggested_fnames) {
+          $count++;
+          print "$count - $filename\n";
+        }
+
+        print "\nWhich filename would you like to use?: ";
+        chomp(my $chosen_fname = <STDIN>);
+
+        $video->{filename} = $suggested_fnames[$chosen_fname - 1] ||
+          $suggested_fnames[-1];
+      }
     }
 
-    # XXX: Needs some thought, but this hack works for Youku for now it seems.
-    if (ref $data eq 'ARRAY') {
-      my ($url, $part_number, $part_count, $part_size) = @$data;
-      $data = $url;
-      if (defined $part_number && defined $part_count) {
-        my $part_suffix = sprintf('.part%02d_of_%02d', $part_number, $part_count);
-        substr $file, rindex($file, '.'), 0, $part_suffix
-          if $part_count > 1;
-      }
-
-      if (defined $part_size && -f $file && -s $file == $part_size) {
-        info "Already downloaded $file ($part_size bytes)";
-        next;
-      }
-    }
-
-    my $size = $downloader->$action($data, $file, $browser) || return 0;
+    my $size = $downloader->$action($video, $browser) || return 0;
 
     info "\n" . ($remaining == 1 ? "Done. " : "")
       . "Saved $size bytes to $downloader->{printable_filename}";

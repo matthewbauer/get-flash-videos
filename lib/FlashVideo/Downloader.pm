@@ -18,7 +18,7 @@ sub new {
 }
 
 sub play {
-  my ($self, $url, $file, $browser) = @_;
+  my ($self, $video, $browser) = @_;
 
   $self->{stream} = sub {
     $self->{stream} = undef;
@@ -35,7 +35,7 @@ sub play {
         require Win32::Process;
         require File::Basename;
         require File::Spec;
-        $file = File::Spec->rel2abs($file);
+        $video->{filename} = File::Spec->rel2abs($video->{filename});
 
         # For absolutely no valid reason, Win32::Process::Create requires
         # *just* the EXE filename (for example vlc.exe) and then any
@@ -54,7 +54,7 @@ sub play {
         Win32::Process::Create(
           $process,
           $vlc_binary,
-          "$binary_no_path $file",
+          "$binary_no_path $video->{filename}",
           1,
           32, # NORMAL_PRIORITY_CLASS
           $binary_just_path,
@@ -66,21 +66,23 @@ sub play {
       my $pid = fork;
       die "Fork failed" unless defined $pid;
       if(!$pid) {
-        exec $self->replace_filename($self->player, $file);
+        exec $self->replace_filename($self->player, $video->{filename});
         die "Exec failed\n";
       }
     }
   };
 
-  $self->download($url, $file, $browser);
+  $self->download($video, $browser);
 }
 
 sub download {
-  my ($self, $url, $file, $browser) = @_;
+  my ($self, $video, $browser) = @_;
 
-  $self->{printable_filename} = $file;
+  $self->{printable_filename} = $video->{filename};
 
-  $file = $self->get_filename($file);
+  my $file = $self->get_filename($video->{filename});
+
+  my $url = $video->{url};
 
   # Support resuming
   my $mode = (-e $file) ? '>>' : '>';
